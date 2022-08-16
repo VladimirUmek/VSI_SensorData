@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021 Arm Limited. All rights reserved.
+ * Copyright (c) 2022 Arm Limited. All rights reserved.
  */
 
 #include <stddef.h>
@@ -10,25 +10,36 @@
 #include "RTE_Components.h"
 #include CMSIS_device_header
 
+/* Sensor units
+
+|       |       Unit      | Alternative Unit | Conversion              | NXP Sensor Fusion | STMicro X-CUBE-MEMS
+| TEMP  | degrees Celsius | Kelvin           | 1[degC] == 274.15[K]    | degC              | degC
+| HUM   | % (percentage)  |                  |                         | %                 | %
+| PRESS | hPa             | kPa              | 1[hPa] == 0.1[kPa]      |                   | Pa
+| ACC   | G (gravity)     | m/s2             | 1[m/s2] == 9.8066[G]    | G                 | mG
+| GYRO  | dps (deg/s)     | rad/s            | 1[dps] == 0.0175[rad/s] | dps (deg/s)       | mdps
+| MAG   | uT (micro Tesla)| Gauss            | 1[uT] == 0.01[G]        | uT                | mGauss
+
+  See: https://www.iana.org/assignments/senml/senml.xhtml
+  See: https://au.mathworks.com/help/supportpkg/beagleboneblue/ref/mpu9250.html#mw_767456e9-c318-4f60-ae79-3413342658e0
+  See: https://sst.semiconductor-digest.com/2010/11/introduction-to-mems-gyroscopes/
+*/
+
 #define VSI               ARM_VSI0              /* VSI instance          */
 #define VSI_IRQn          ARM_VSI0_IRQn         /* VSI interrupt number  */
 #define VSI_Handler       ARM_VSI0_Handler      /* VSI interrupt handler */
 
-#define CTRL              Regs[0]
-#define STATUS            Regs[1]
-#define CLK_DIV           Regs[2]
-#define SELECT            Regs[3]
+#define STATUS            Regs[0]
+#define INTERVAL          Regs[1]
+#define SELECT            Regs[2]
+#define ENABLE            Regs[3]
 #define SCALE             Regs[4]
 #define ODR               Regs[5]
 #define FIFO_CNT          Regs[6]
 #define FIFO              Regs[7]
-#define FIFO_MOTION_X     Regs[8]
-#define FIFO_MOTION_Y     Regs[9]
-#define FIFO_MOTION_Z     Regs[10]
 
-
-#define TIME_BETWEEN_SAMPLES_US(sampling_freq) (1000000 / (sampling_freq - 1))
-
+/* Number of sensors implemented using VSI peripheral */
+#define SENSOR_COUNT      6
 
 /* Event Callback */
 static Sensor_Event_t CB_Event = NULL;
@@ -36,7 +47,7 @@ static Sensor_Event_t CB_Event = NULL;
 /* VSI interrupt handler */
 void VSI_Handler (void) {
   uint32_t status;
-  uint32_t evt;
+  uint32_t event;
 
   VSI->IRQ.Clear = 1U;
   __DSB();
@@ -44,29 +55,29 @@ void VSI_Handler (void) {
 
   status = VSI->STATUS;
 
-  evt = 0U;
+  event = 0U;
 
   if (status & SENSOR_STATUS_FIFO_NE_TEMP) {
-    evt = SENSOR_EVENT_TEMP_DATA_AVAILABLE;
+    event |= SENSOR_EVENT_TEMP_DATA_AVAILABLE;
   }
   if (status & SENSOR_STATUS_FIFO_NE_HUM) {
-    evt = SENSOR_EVENT_HUM_DATA_AVAILABLE;
+    event |= SENSOR_EVENT_HUM_DATA_AVAILABLE;
   }
   if (status & SENSOR_STATUS_FIFO_NE_PRESS) {
-    evt = SENSOR_EVENT_PRESS_DATA_AVAILABLE;
+    event |= SENSOR_EVENT_PRESS_DATA_AVAILABLE;
   }
   if (status & SENSOR_STATUS_FIFO_NE_ACC) {
-    evt = SENSOR_EVENT_ACC_DATA_AVAILABLE;
+    event |= SENSOR_EVENT_ACC_DATA_AVAILABLE;
   }
   if (status & SENSOR_STATUS_FIFO_NE_GYRO) {
-    evt = SENSOR_EVENT_GYRO_DATA_AVAILABLE;
+    event |= SENSOR_EVENT_GYRO_DATA_AVAILABLE;
   }
   if (status & SENSOR_STATUS_FIFO_NE_MAG) {
-    evt = SENSOR_EVENT_MAG_DATA_AVAILABLE;
+    event |= SENSOR_EVENT_MAG_DATA_AVAILABLE;
   }
 
-  if (CB_Event != NULL) {
-    CB_Event(evt);
+  if ((CB_Event != NULL) && (event != 0U)) {
+    CB_Event(event);
   }
 }
 
@@ -91,11 +102,9 @@ static uint32_t IsTypeEnv (uint32_t type) {
   }
 }
 
-//static uint32_t GetTimerInterval {
-//}
-
 
 int32_t Sensor_Initialize (Sensor_Event_t cb_event) {
+  uint32_t id;
 
   CB_Event = cb_event;
 
@@ -105,25 +114,27 @@ int32_t Sensor_Initialize (Sensor_Event_t cb_event) {
   VSI->IRQ.Clear     = 0x00000001U;
   VSI->IRQ.Enable    = 0x00000001U;
 
-  /* Initialize user registers */
-  VSI->CTRL = 0U;
+  /* Disable sensors */
+  for (id = 0U; id < SENSOR_COUNT; id++) {
+    VSI->SELECT = id;
+    VSI->ENABLE = 0U;
+  }
 
   /* Enable VSI interrupts */
-  //NVIC_EnableIRQ(VSI_IRQn);
   NVIC->ISER[(((uint32_t)VSI_IRQn) >> 5UL)] = (uint32_t)(1UL << (((uint32_t)VSI_IRQn) & 0x1FUL));
+  // NVIC_EnableIRQ(VSI_IRQn);
   __DSB();
   __ISB();
 
-//  Initialized = 1U;
-
-  return 0;//_OK;
+  return SENSOR_OK;
 }
 
 int32_t Sensor_Uninitialize (void) {
+  uint32_t id;
 
   /* Disable VSI interrupts */
-  //NVIC_DisableIRQ(VSI_IRQn);
   NVIC->ICER[(((uint32_t)VSI_IRQn)  >> 5UL)] = (uint32_t)(1UL << (((uint32_t)VSI_IRQn)  & 0x1FUL));
+  // NVIC_DisableIRQ(VSI_IRQn);
   __DSB();
   __ISB();
 
@@ -133,14 +144,15 @@ int32_t Sensor_Uninitialize (void) {
   VSI->IRQ.Clear     = 0x00000001U;
   VSI->IRQ.Enable    = 0x00000000U;
   
-  /* Deinitialize user registers */
-  VSI->CTRL = 0U;
+  /* Disable sensors */
+  for (id = 0U; id < SENSOR_COUNT; id++) {
+    VSI->SELECT = id;
+    VSI->ENABLE = 0U;
+  }
 
   CB_Event = NULL;
 
-//  Initialized = 0U;
-
-  return 0; //_OK;
+  return SENSOR_OK;
 }
 
 int32_t Sensor_Enable (uint32_t type) {
@@ -151,13 +163,12 @@ int32_t Sensor_Enable (uint32_t type) {
     return (SENSOR_INVALID_PARAMETER);
   }
 
-  ctrl = (1UL << type);
-
   /* Enable sensor */
-  VSI->CTRL |= ctrl;
+  VSI->SELECT = type;
+  VSI->ENABLE = 1U;
 
   /* Re-evaluate peripheral clock divider */
-  div = VSI->CLK_DIV;
+  div = VSI->INTERVAL;
 
   if (VSI->Timer.Interval != div) {
     /* Re-configure peripheral timer (clock) */
@@ -177,29 +188,66 @@ int32_t Sensor_Disable (uint32_t type) {
     return (SENSOR_INVALID_PARAMETER);
   }
 
-  ctrl = VSI->CTRL & ~(1UL << type);
-
   /* Disable sensor */
-  VSI->CTRL = ctrl;
+  VSI->SELECT = type;
+  VSI->ENABLE = 0U;
 
   return SENSOR_OK;
 }
 
 
-int32_t Sensor_MotionReadData (uint32_t type, int32_t *x, int32_t *y, int32_t *z) {
+int32_t Sensor_MotionReadData (uint32_t type, float *x, float *y, float *z) {
   uint32_t num;
+  uint32_t scale;
+  int32_t axes[3];
 
   /* Select requested sensor */
   VSI->SELECT = type;
-  
+
+  /* Read current scale setting */
+  scale = VSI->SCALE;
+
   /* Read number of samples available in FIFO */
   num = VSI->FIFO_CNT;
 
   if (num > 0U) {
     /* Read FIFO */
-    *x = VSI->FIFO_MOTION_X;
-    *y = VSI->FIFO_MOTION_Y;
-    *z = VSI->FIFO_MOTION_Z;
+    axes[0] = VSI->FIFO;
+    axes[1] = VSI->FIFO;
+    axes[2] = VSI->FIFO;
+
+    *x = (float)axes[0] / scale;
+    *y = (float)axes[1] / scale;
+    *z = (float)axes[2] / scale;
+
+    /* Decrease number of samples available */
+    num -= 3U;
+  }
+
+  /* Return number of samples available to read */
+  return (num);
+}
+
+
+int32_t Sensor_EnvReadData (uint32_t type, float *data) {
+  uint32_t num;
+  uint32_t scale;
+  int32_t val;
+
+  /* Select requested sensor */
+  VSI->SELECT = type;
+
+  /* Read current scale setting */
+  scale = VSI->SCALE;
+
+  /* Read number of samples available in FIFO */
+  num = VSI->FIFO_CNT;
+
+  if (num > 0U) {
+    /* Read FIFO */
+    val = VSI->FIFO;
+
+    *data = (float)val / scale;
 
     /* Decrement number of samples available */
     num--;
@@ -210,27 +258,54 @@ int32_t Sensor_MotionReadData (uint32_t type, int32_t *x, int32_t *y, int32_t *z
 }
 
 
-int32_t Sensor_EnvReadData (uint32_t type, int32_t *data) {
-  uint32_t num;
+int32_t Sensor_QueryInterval (uint32_t type, uint32_t interval[], uint32_t len) {
 
-  /* Select requested sensor */
-  VSI->SELECT = type;
-  
-  /* Read number of samples available in FIFO */
-  num = VSI->FIFO_CNT;
-
-  if (num > 0U) {
-    /* Read FIFO */
-    *data = VSI->FIFO;
-
-    /* Decrement number of samples available */
-    num--;
+  if ((IsTypeValid(type) == 0U) || (interval == NULL) || (len == 0U)) {
+    return (SENSOR_INVALID_PARAMETER);
   }
 
-  /* Return number of samples available to read */
-  return (num);
+  /* Select sensor */
+  VSI->SELECT = type;
+
+  /* This VSI driver implements single sampling interval */
+  interval[0] = VSI->ODR;
+
+  return (1U);
 }
 
+
+uint32_t Sensor_GetInterval (uint32_t type) {
+  uint32_t odr;
+
+  if (IsTypeValid(type) == 0U) {
+    return (SENSOR_INVALID_PARAMETER);
+  }
+
+  /* Select sensor */
+  VSI->SELECT = type;
+
+  /* Retrieve current sampling interval */
+  odr = VSI->ODR;
+
+  return (odr);
+}
+
+
+int32_t Sensor_SetInterval (uint32_t type, uint32_t interval) {
+  int32_t scale;
+
+  if (IsTypeValid(type) == 0U) {
+    return (SENSOR_INVALID_PARAMETER);
+  }
+
+  /* Select sensor */
+  VSI->SELECT = type;
+
+  /* Set sampling interval */
+  VSI->ODR = interval;
+
+  return (SENSOR_OK);
+}
 
 int32_t Sensor_QueryScale (uint32_t type, int32_t data[], uint32_t len) {
 
@@ -238,38 +313,30 @@ int32_t Sensor_QueryScale (uint32_t type, int32_t data[], uint32_t len) {
     return (SENSOR_INVALID_PARAMETER);
   }
 
-  //busy = 1U;
-
   /* Select sensor */
   VSI->SELECT = type;
 
   /* Retrieve current full scale setting */
   data[0] = VSI->SCALE;
 
-  //busy = 0U;
-
   return (1U);
 }
 
 
-int32_t Sensor_GetScale (uint32_t type, int32_t *data) {
+int32_t Sensor_GetScale (uint32_t type) {
   int32_t scale;
 
   if (IsTypeValid(type) == 0U) {
     return (SENSOR_INVALID_PARAMETER);
   }
 
-  //busy = 1U;
-
   /* Select sensor */
   VSI->SELECT = type;
 
   /* Retrieve current full scale setting */
-  *data = VSI->SCALE;
+  scale = VSI->SCALE;
 
-  //busy = 0U;
-
-  return (SENSOR_OK);
+  return (scale);
 }
 
 
@@ -280,76 +347,11 @@ int32_t Sensor_SetScale (uint32_t type, int32_t data) {
     return (SENSOR_INVALID_PARAMETER);
   }
 
-  //busy = 1U;
-
   /* Select sensor */
   VSI->SELECT = type;
 
   /* Set full scale setting */
   VSI->SCALE = data;
-
-  //busy = 0U;
-
-  return (SENSOR_OK);
-}
-
-
-int32_t Sensor_QueryDataRate (uint32_t type, uint32_t data[], uint32_t len) {
-
-  if ((IsTypeValid(type) == 0U) || (data == NULL) || (len == 0U)) {
-    return (SENSOR_INVALID_PARAMETER);
-  }
-
-  //busy = 1U;
-
-  /* Select sensor */
-  VSI->SELECT = type;
-
-  /* This VSI driver implements single output data rate setting */
-  data[0] = VSI->ODR;
-
-  //busy = 0U;
-
-  return (1U);
-}
-
-
-int32_t Sensor_GetDataRate (uint32_t type, uint32_t *rate) {
-
-  if (IsTypeValid(type) == 0U) {
-    return (SENSOR_INVALID_PARAMETER);
-  }
-
-  //busy = 1U;
-
-  /* Select sensor */
-  VSI->SELECT = type;
-
-  /* Retrieve current output data rate setting */
-  *rate = VSI->ODR;
-
-  //busy = 0U;
-
-  return (SENSOR_OK);
-}
-
-
-int32_t Sensor_SetDataRate (uint32_t type, uint32_t rate) {
-  int32_t scale;
-
-  if (IsTypeValid(type) == 0U) {
-    return (SENSOR_INVALID_PARAMETER);
-  }
-
-  //busy = 1U;
-
-  /* Select sensor */
-  VSI->SELECT = type;
-
-  /* Set output data rate setting */
-  VSI->ODR = rate;
-
-  //busy = 0U;
 
   return (SENSOR_OK);
 }

@@ -12,6 +12,7 @@
 
 import math
 import logging
+import os
 
 ## Set verbosity level
 verbosity = logging.DEBUG
@@ -22,9 +23,8 @@ level = { 10: "DEBUG",  20: "INFO",  30: "WARNING",  40: "ERROR" }
 logging.basicConfig(format='Py: VSI0: [%(levelname)s]\t%(message)s', level = verbosity)
 logging.info("Verbosity level is set to " + level[verbosity])
 
-# File names
-#FILE_NAME_SENSOR = "sensor_samples.csv"
-FILE_NAME_SENSOR = "..\\..\\..\\sensor_samples.csv"
+# Input File Name
+FILE_NAME_SENSOR = "..\\sensor_samples0.csv"
 
 CSV_Col = {
     'Timestamp' : -1,
@@ -68,7 +68,7 @@ DMA_Control_Direction_Msk = 1<<1
 DMA_Control_Direction_P2M = 0<<1
 DMA_Control_Direction_M2P = 1<<1
 
-#Define number of sensors
+# Define number of sensors
 SENSOR_COUNT = 6
 
 # Sensor ID definitions (constants)
@@ -81,32 +81,14 @@ SID_MAG   = 5
 
 # USER REGISTER MAPPING
 # =====================
-IDX_CTRL          = 0
-IDX_STATUS        = 1
-IDX_CLK_DIV       = 2
-IDX_SELECT        = 3
+IDX_STATUS        = 0
+IDX_INTERVAL      = 1
+IDX_SELECT        = 2
+IDX_ENABLE        = 3
 IDX_SCALE         = 4
 IDX_ODR           = 5
 IDX_FIFO_CNT      = 6
 IDX_FIFO          = 7
-IDX_FIFO_MOTION_X = 8
-IDX_FIFO_MOTION_Y = 9
-IDX_FIFO_MOTION_Z = 10
-# Reserved registers
-IDX_ODR_CNT       = 11
-IDX_FIFO_TS       = 12
-
-# Control Register
-# ================
-CTRL = 0
-
-# Bit definitions
-BIT_CTRL_EN_TEMP  = 1 << SID_TEMP
-BIT_CTRL_EN_HUM   = 1 << SID_HUM
-BIT_CTRL_EN_PRESS = 1 << SID_PRESS
-BIT_CTRL_EN_ACC   = 1 << SID_ACC
-BIT_CTRL_EN_GYRO  = 1 << SID_GYRO
-BIT_CTRL_EN_MAG   = 1 << SID_MAG
 
 # Status Register
 # ===============
@@ -114,24 +96,27 @@ STATUS = 0
 
 # Bit definitions
 BIT_STATUS_FIFO_NE_TEMP  = 1 << SID_TEMP
-BIT_STATUS_FIFO_NE_HUM   = 1 << SID_HUM  
+BIT_STATUS_FIFO_NE_HUM   = 1 << SID_HUM
 BIT_STATUS_FIFO_NE_PRESS = 1 << SID_PRESS
-BIT_STATUS_FIFO_NE_ACC   = 1 << SID_ACC  
-BIT_STATUS_FIFO_NE_GYRO  = 1 << SID_GYRO 
-BIT_STATUS_FIFO_NE_MAG   = 1 << SID_MAG  
+BIT_STATUS_FIFO_NE_ACC   = 1 << SID_ACC
+BIT_STATUS_FIFO_NE_GYRO  = 1 << SID_GYRO
+BIT_STATUS_FIFO_NE_MAG   = 1 << SID_MAG
+
+# INTERVAL Register
+# ===============
+INTERVAL = 0
 
 # Sensor Select Register
 # ======================
 SELECT = 0
 
-# Measurement scale (default)
-# ===========================
-# ACC   Units: G
-# GYRO  Units: dps
-# MAG   Units: Gauss?
-# TEMP  Units: deg Celsius
-# HUM   Units: %
-# PRESS Units: mBar
+# Enable Register
+# ===============
+# Enable (1) or Disable (0) selected sensor
+ENABLE = []
+
+# Scale Register
+# ==============
 SCALE = []
 
 # Output data rate (in microseconds (Hz))
@@ -157,9 +142,30 @@ FIFO = []
 # FIFO data timestamp (per sensor)
 FIFO_TS = []
 
+## Create and initialize user registers
+def CreateUserRegisters():
+
+    # Create lists of registers (per sensor)
+    for i in range(SENSOR_COUNT):
+        ENABLE.append(list())
+        SCALE.append(list())
+        ODR.append(list())
+        ODR_CNT.append(list())
+        FIFO_CNT.append(list())
+        FIFO.append(list())
+        FIFO_TS.append(list())
+
+    # Initialize registers
+    for i in range(SENSOR_COUNT):
+        ENABLE[i]   = 0
+        SCALE[i]    = 100000
+        ODR[i]      = 0
+        ODR_CNT[i]  = 0
+        FIFO_CNT[i] = 0
 
 ## Open CSV file containing sensor data
 def openDataFile(file_name):
+    global FIFO, FIFO_TS, ODR
     logging.info("openDataFile({}) called".format(file_name))
 
     f = open(file_name)
@@ -171,6 +177,7 @@ def openDataFile(file_name):
     for i in range(len(components)):
         components[i] = components[i].strip()
 
+    # Display CSV file header
     logging.debug("Header: {}".format(components))
 
     # Update key values according to the input file format
@@ -239,188 +246,92 @@ def openDataFile(file_name):
 
     f.close()
 
-def enTEMP(enable):
-    val = True
-    if enable:
-        # Enable sensor
-        if CSV_Col['Temp'] != -1:
-            # Load ODR register if timestamp is provided via input file
-            if CSV_Col['Timestamp'] != -1:
-                t0 = FIFO_TS[SID_TEMP][0]
-                t1 = FIFO_TS[SID_TEMP][1]
-                ODR[SID_TEMP] = int(t1) - int(t0)
-        else:
-            val = False
-    else:
-        # Disable sensor
-        ODR[SID_TEMP] = 0
-        FIFO_CNT[SID_TEMP] = 0
+    if CSV_Col['Timestamp'] != -1:
+        # Timestamp is provided, determine initial ODR
+        for sid in range(SENSOR_COUNT):
+            if len(FIFO_TS[sid]) > 0:
+                if (sid == SID_TEMP) or (sid == SID_HUM) or (sid == SID_PRESS):                
+                    t0 = FIFO_TS[sid][0]
+                    t1 = FIFO_TS[sid][1]
+                else:
+                    t0 = FIFO_TS[sid][0]
+                    t1 = FIFO_TS[sid][3]
 
-    return val
+            ODR[sid] = int(t1) - int(t0)
+
+def enTEMP(enable):
+    if enable and CSV_Col['Temp'] == -1:
+        # Sensor samples not available
+        enable = 0
+
+    return enable
 
 def enHUM(enable):
-    val = True
-    if enable:
-        if CSV_Col['Hum'] != -1:
-            # Load ODR register if timestamp is provided via input file
-            if CSV_Col['Timestamp'] != -1:
-                t0 = FIFO_TS[SID_HUM][0]
-                t1 = FIFO_TS[SID_HUM][1]
-                ODR[SID_HUM] = int(t1) - int(t0)
-        else:
-            val = False
-    else:
-        # Disable sensor
-        ODR[SID_HUM] = 0
-        FIFO_CNT[SID_HUM] = 0
+    if enable and CSV_Col['Hum'] == -1:
+        # Sensor samples not available
+        enable = 0
 
-    return val
+    return enable
 
 def enPRESS(enable):
-    val = True
-    if enable:
-        if CSV_Col['Press'] != -1:
-            # Load ODR register if timestamp is provided via input file
-            if CSV_Col['Timestamp'] != -1:
-                t0 = FIFO_TS[SID_PRESS][0]
-                t1 = FIFO_TS[SID_PRESS][1]
-                ODR[SID_PRESS] = int(t1) - int(t0)
-        else:
-            val = False
-    else:
-        # Disable sensor
-        ODR[SID_PRESS] = 0
-        FIFO_CNT[SID_PRESS] = 0
-    return val
+    if enable and CSV_Col['Press'] == -1:
+        # Sensor samples not available
+        enable = 0
+
+    return enable
 
 def enACC(enable):
-    val = True
-    if enable:
-        if CSV_Col['AccX'] != -1 and CSV_Col['AccY'] != -1 and CSV_Col['AccZ'] != -1:
-            # Load ODR register if timestamp is provided via input file
-            if CSV_Col['Timestamp'] != -1:
-                t0 = FIFO_TS[SID_ACC][0]
-                t1 = FIFO_TS[SID_ACC][3]
-                ODR[SID_ACC] = int(t1) - int(t0)
-        else:
-            val = False
-    else:
-        # Disable sensor
-        ODR[SID_ACC] = 0
-        FIFO_CNT[SID_ACC] = 0
-    return val
+    if enable and (CSV_Col['AccX'] == -1 and CSV_Col['AccY'] == -1 and CSV_Col['AccZ'] == -1):
+        # Sensor samples not available
+        enable = 0
+
+    return enable
 
 def enGYRO(enable):
-    val = True
-    if enable:
-        if CSV_Col['GyroX'] != -1 and CSV_Col['GyroY'] != -1 and CSV_Col['GyroZ'] != -1:
-            # Load ODR register if timestamp is provided via input file
-            if CSV_Col['Timestamp'] != -1:
-                t0 = FIFO_TS[SID_GYRO][0]
-                t1 = FIFO_TS[SID_GYRO][3]
-                ODR[SID_GYRO] = int(t1) - int(t0)
-        else:
-            val = False
-    else:
-        # Disable sensor
-        ODR[SID_GYRO] = 0
-        FIFO_CNT[SID_GYRO] = 0
-    return val
+    if enable and (CSV_Col['GyroX'] == -1 and CSV_Col['GyroY'] == -1 and CSV_Col['GyroZ'] == -1):
+        # Sensor samples not available
+        enable = 0
+
+    return enable
 
 def enMAG(enable):
-    val = True
-    if enable:
-        if CSV_Col['MagX'] != -1 and CSV_Col['MagY'] != -1 and CSV_Col['MagZ'] != -1:
-            # Load ODR register if timestamp is provided via input file
-            if CSV_Col['Timestamp'] != -1:
-                t0 = FIFO_TS[SID_MAG][0]
-                t1 = FIFO_TS[SID_MAG][3]
-                ODR[SID_MAG] = int(t1) - int(t0)
-        else:
-            val = False
-    else:
-        # Disable sensor
-        ODR[SID_MAG] = 0
-        FIFO_CNT[SID_MAG] = 0
-    return val
+    if enable and (CSV_Col['MagX'] == -1 and CSV_Col['MagY'] == -1 and CSV_Col['MagZ'] == -1):
+        # Sensor samples not available
+        enable = 0
 
+    return enable
 
-# USER REGISTER HANDLING
-# ======================
+# Handle Timer Interval Expiration
+def IntervalHandler():
+    global ODR_CNT, FIFO_CNT
+    logging.debug("IntervalHandler() called")
 
-## Read CTRL register (user register)
-#  @return value value read (32-bit)
-def rdCTRL():
-    #global CTRL
-    logging.info("rdCTRL() called")
+    for sid in range(SENSOR_COUNT):
+        if ENABLE[sid]:
+            # Sensor is enabled, check its interval counter
+            if ODR_CNT[sid] > 0:
+                # Decrease interval down-counter
+                ODR_CNT[sid] -= INTERVAL
+            
+            if ODR_CNT[sid] == 0:
+                # Increase number of samples in FIFO
+                FIFO_CNT[sid] += int(INTERVAL / ODR[sid])
 
-    value = CTRL
+                if sid >= SID_ACC:
+                    # Motion sensor sample consists of 3 FIFO entries
+                    FIFO_CNT[sid] *= 3
 
-    logging.debug("rdCTRL() = {}".format(value))
-    return value
+                # Interval expired, reload down-counter
+                ODR_CNT[sid] = ODR[sid]
+            
+            logging.debug("SID={}, ODR_CNT={}. FIFO_CNT={}".format(sid, ODR_CNT[sid], FIFO_CNT[sid]))
 
-## Write CTRL register (user register)
-#  @param value value to write (32-bit)
-def wrCTRL(value):
-    global CTRL
-    logging.debug("wrCTRL({}) called".format(value))
-
-    if ((CTRL ^ value) & BIT_CTRL_EN_TEMP) != 0:
-        if enTEMP((value & BIT_CTRL_EN_TEMP) != 0) == False:
-            # Cannot enable, clear enable bit
-            value &= ~BIT_CTRL_EN_TEMP
-
-    if ((CTRL ^ value) & BIT_CTRL_EN_HUM) != 0:
-        if enHUM((value & BIT_CTRL_EN_HUM) != 0) == False:
-            # Cannot enable, clear enable bit
-            value &= ~BIT_CTRL_EN_HUM
-
-    if ((CTRL ^ value) & BIT_CTRL_EN_PRESS) != 0:
-        if enPRESS((value & BIT_CTRL_EN_PRESS) != 0) == False:
-            # Cannot enable, clear enable bit
-            value &= ~BIT_CTRL_EN_PRESS
-
-    if ((CTRL ^ value) & BIT_CTRL_EN_ACC) != 0:
-        if enACC((value & BIT_CTRL_EN_ACC) != 0) == False:
-            # Cannot enable, clear enable bit
-            value &= ~BIT_CTRL_EN_ACC
-
-    if ((CTRL ^ value) & BIT_CTRL_EN_GYRO) != 0:
-        if enGYRO((value & BIT_CTRL_EN_GYRO) != 0) == False:
-            # Cannot enable, clear enable bit
-            value &= ~BIT_CTRL_EN_GYRO
-
-    if ((CTRL ^ value) & BIT_CTRL_EN_MAG) != 0:
-        if enMAG((value & BIT_CTRL_EN_MAG) != 0) == False:
-            # Cannot enable, clear enable bit
-            value &= ~BIT_CTRL_EN_MAG
-
-    CTRL = value
-
-## Read STATUS register (user register)
-#  @return value value read (32-bit)
-def rdSTATUS():
-    global STATUS
-    logging.info("rdSTATUS() called")
-
-    value = 0
-
-    for sid in range(len(FIFO)):
-        value = (len(FIFO[sid]) > 0) << sid
-
-    value = STATUS
-
-    logging.debug("rdSTATUS() = {}".format(value))
-    return value
-
-## Read CLK_DIV register (user register)
-#  @return value value read (32-bit)
-def rdCLK_DIV():
-    logging.info("rdCLK_DIV() called")
-
-    odr = [1000000]
+## Calculate the timer overflow interval to service enabled sensors
+# Function calculates greatest common divisor among ODR registers
+def CalculateInterval():
+    odr = list()
     
-    for sid in range(len(ODR)):
+    for sid in range(SENSOR_COUNT):
         if ODR[sid] > 0:
             odr.append(ODR[sid])
 
@@ -431,146 +342,187 @@ def rdCLK_DIV():
 
     value = odr[0]
 
-    logging.debug("rdCLK_DIV() = {}".format(value))
+    return value
+
+# USER REGISTER HANDLING
+# ======================
+
+## Read ENABLE register (user register)
+#  @return value value read (32-bit)
+def rdENABLE():
+    global SELECT, ENABLE
+
+    sid = SELECT
+    value = ENABLE[sid]
+
+    logging.debug("Read ENABLE[{}]: {}".format(sid, value))
+    return value
+
+## Write ENABLE register (user register)
+#  @param value value to write (32-bit)
+def wrENABLE(value):
+    global SELECT, ENABLE
+
+    sid = SELECT
+
+    if   sid == SID_TEMP:
+        value = enTEMP(value)
+    elif sid == SID_HUM:
+        value = enHUM(value)
+    elif sid == SID_PRESS:
+        value = enPRESS(value)
+    elif sid == SID_ACC:
+        value = enACC(value)
+    elif sid == SID_GYRO:
+        value = enGYRO(value)
+    elif sid == SID_MAG:
+        value = enMAG(value)
+
+    logging.debug("Write ENABLE[{}] = {}".format(sid, value))
+
+    ENABLE[sid] = value
+
+## Read STATUS register (user register)
+#  @return value value read (32-bit)
+def rdSTATUS():
+    global STATUS, FIFO_CNT
+
+    value = 0
+
+    for sid in range(SENSOR_COUNT):
+        if FIFO_CNT[sid] > 0:
+            value |= 1 << sid
+
+    STATUS = value
+
+    logging.debug("Read STATUS: {}".format(value))
+    return value
+
+## Read INTERVAL register (user register)
+#  @return value value read (32-bit)
+def rdINTERVAL():
+    global INTERVAL
+
+    value = INTERVAL
+
+    logging.debug("Read INTERVAL: {}".format(value))
     return value
 
 ## Read SELECT register (user register)
 #  @return value value read (32-bit)
 def rdSELECT(value):
     global SELECT
-    logging.debug("rdSELECT() called")
 
     value = SELECT
 
-    logging.debug("rdSELECT() = {}".format(value))
+    logging.debug("Read SELECT: {}".format(value))
     return value
 
 ## Write SELECT register (user register)
 #  @param value value to write (32-bit)
 def wrSELECT(value):
     global SELECT
-    logging.debug("wrSELECT({}) called".format(value))
+    logging.debug("Write SELECT = {}".format(value))
 
     SELECT = value
 
 ## Read SCALE register (user register)
 #  @return value value read (32-bit)
 def rdSCALE():
-    global SCALE
-    logging.debug("rdSCALE() called")
+    global SELECT, SCALE
 
-    value = SCALE[SELECT]
+    sid = SELECT
+    value = SCALE[sid]
 
-    logging.debug("rdSCALE() = {}".format(value))
+    logging.debug("Read SCALE[{}]: {}".format(sid, value))
     return value
 
 ## Write SCALE register (user register)
 #  @param value value to write (32-bit)
 def wrSCALE(value):
-    global SCALE
-    logging.debug("wrSCALE({}) called".format(value))
+    global SELECT, SCALE
 
-    SCALE[SELECT] = value
+    sid = SELECT
+    logging.debug("Write SCALE[{}] = {}".format(sid, value))
+
+    SCALE[sid] = value
 
 ## Read ODR register (user register)
 #  @return value value read (32-bit)
 def rdODR():
-    global ODR
-    logging.debug("rdODR() called")
+    global SELECT, ODR
 
-    value = ODR[SELECT]
+    sid = SELECT
+    value = ODR[sid]
 
-    logging.debug("rdODR() = {}".format(value))
+    logging.debug("Read ODR[{}]: {}".format(sid, value))
 
     return value
 
 ## Write ODR register (user register)
 #  @param value value to write (32-bit)
 def wrODR(value):
-    global ODR
-    logging.debug("wrODR({}) called".format(value))
+    global SELECT, ODR
 
-    ODR[SELECT] = value
+    sid = SELECT
+    logging.debug("Write ODR[{}] = {}".format(sid, value))
+
+    ODR[sid] = value
 
 ## Read FIFO_CNT register (user register)
 #  @return value value read (32-bit)
 def rdFIFO_CNT():
-    global FIFO
-    logging.debug("rdFIFO_CNT() called")
+    global SELECT, FIFO_CNT
 
-    #value = len(FIFO[SELECT])
-    value = FIFO_CNT[SELECT]
+    sid = SELECT
+    value = FIFO_CNT[sid]
 
-    logging.debug("rdFIFO_CNT() = {}".format(value))
+    logging.debug("Read FIFO_CNT[{}]: {}".format(sid, value))
     return value
 
 ## Read FIFO register (user register)
 #  @return value value read (32-bit)
 def rdFIFO():
-    global FIFO, FIFO_TS
-    logging.debug("rdFIFO() called")
+    global SELECT, FIFO, FIFO_TS, FIFO_CNT
 
-    FIFO_TS[SELECT].pop(0)
-    value = FIFO[SELECT].pop(0)
+    sid = SELECT
 
-    logging.debug("rdFIFO() = {}".format(value))
-    return int(value)
+    if len(FIFO[sid]) > 0 and FIFO_CNT[sid] > 0:
+        # Pop sample from FIFOs (Timestamp + Sample value)
+        FIFO_TS[sid].pop(0)
+        val = FIFO[sid].pop(0)
+        # Decrement virtual FIFO counter
+        FIFO_CNT[sid] -= 1
 
-## Read FIFO_MOTION_X register (user register)
-#  @return value value read (32-bit)
-def rdFIFO_MOTION_X():
-    logging.debug("rdFIFO_MOTION_X() called")
+        if len(FIFO[sid]) == 0:
+            # No more samples in sensor FIFO, disable sensor
+            ENABLE[sid] = 0
+    else:
+        val = 0
 
-    value = rdFIFO()
+    scaled_float = float(val) * SCALE[sid]
 
-    logging.debug("rdFIFO_MOTION_X() = {}".format(value))
+    value = int(scaled_float)
+    value &= 0xffffffff
+
+    logging.debug("Read FIFO[{}]: {} ({})".format(sid, value, val))
     return value
-
-## Read FIFO_MOTION_Y register (user register)
-#  @return value value read (32-bit)
-def rdFIFO_MOTION_Y():
-    logging.debug("rdFIFO_MOTION_Y() called")
-
-    value = rdFIFO()
-
-    logging.debug("rdFIFO_MOTION_Y() = {}".format(value))
-    return value
-
-## Read FIFO_MOTION_Z register (user register)
-#  @return value value read (32-bit)
-def rdFIFO_MOTION_Z():
-    logging.debug("rdFIFO_MOTION_Z() called")
-
-    value = rdFIFO()
-
-    logging.debug("rdFIFO_MOTION_Z() = {}".format(value))
-    return value
-
 
 # VSI IMPLEMENTATION
 # ==================
 
 ## Initialize
 def init():
+    global INTERVAL
     logging.info("init() called")
+    logging.debug("Current working directory: {}".format(os.getcwd()))
 
-    # Create sensor registers
-    for i in range(SENSOR_COUNT):
-        # Create FIFO registers (per sensor data FIFO and timestamp FIFO)
-        FIFO.append(list())
-        FIFO_TS.append(list())
-        FIFO_CNT.append(list())
-    
-        # Create ODR registers
-        ODR.append(list())
-        ODR_CNT.append(list())
-
-    # Initialize registers
-    for i in range(SENSOR_COUNT):
-        ODR[i] = 0
-        ODR_CNT[i] = 0
+    CreateUserRegisters()
    
     openDataFile(FILE_NAME_SENSOR)
+
+    # Initialize timer interval register
+    INTERVAL = CalculateInterval()
 
 
 ## Read interrupt request (the VSI IRQ Status Register)
@@ -623,21 +575,8 @@ def timerEvent():
 
     Timer_Event += 1
 
-    for sid in range(len(ODR)):
-        # Check if sensor is enabled and its output data rate is set
-        if (CTRL & (1 << sid)) == 1 and ODR[sid] > 0:
+    IntervalHandler()
 
-            if ODR_CNT[sid] == 0:
-                # Reload ODR down-counter
-                ODR_CNT[sid] = ODR[sid]
-                # Increment number of samples in FIFO
-                # FIFO_CNT[sid] += 1
-                # Increase number of samples in FIFO
-                FIFO_CNT[sid] += Timer_Interval / ODR[sid]
-            else:
-                # Decrease ODR counter
-                ODR_CNT[sid] -= Timer_Interval
-    
 
 ## Write DMA registers (the VSI DMA Registers)
 #  @param index DMA register index (zero based)
@@ -676,12 +615,12 @@ def wrDataDMA(data, size):
 def rdRegs(index):
     logging.info("rdRegs(index={}) called".format(index))
 
-    if   index == IDX_CTRL:
-        value = rdCTRL()
+    if   index == IDX_ENABLE:
+        value = rdENABLE()
     elif index == IDX_STATUS:
         value = rdSTATUS()
-    elif index == IDX_CLK_DIV:
-        value = rdCLK_DIV()
+    elif index == IDX_INTERVAL:
+        value = rdINTERVAL()
     elif index == IDX_SELECT:
         value = rdSELECT()
     elif index == IDX_SCALE:
@@ -692,12 +631,6 @@ def rdRegs(index):
         value = rdFIFO_CNT()
     elif index == IDX_FIFO:
         value = rdFIFO()
-    elif index == IDX_FIFO_MOTION_X:
-        value = rdFIFO_MOTION_X()
-    elif index == IDX_FIFO_MOTION_Y:
-        value = rdFIFO_MOTION_Y()
-    elif index == IDX_FIFO_MOTION_Z:
-        value = rdFIFO_MOTION_Z()
     else:
         value = 0
 
@@ -711,8 +644,8 @@ def rdRegs(index):
 def wrRegs(index, value):
     logging.info("wrRegs(index={}, value={}) called".format(index, value))
 
-    if   index == IDX_CTRL:
-        wrCTRL(value)
+    if   index == IDX_ENABLE:
+        wrENABLE(value)
     elif index == IDX_SELECT:
         wrSELECT(value)
     elif index == IDX_SCALE:
@@ -725,8 +658,15 @@ def wrRegs(index, value):
 ## @}
 
 def main():
+    global SELECT, FIFO_CNT
     init()
-    enTEMP(True)
-    rdCLK_DIV()
+    enTEMP(1)
+    enACC(1)
+
+    SELECT = 3
+    FIFO_CNT[SELECT] = 7 * 3
+    
+    while FIFO_CNT[SELECT]:
+        rdFIFO()
 
 if __name__ == '__main__': main()
