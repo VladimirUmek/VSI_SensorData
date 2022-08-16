@@ -14,10 +14,6 @@
  * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- *
- *      Name:    app_main.c
- *      Purpose: Example program
- *
  *---------------------------------------------------------------------------*/
 
 #include <stdio.h>
@@ -30,68 +26,126 @@
 
 #include "sensor_drv.h"
 
-extern int test_main(void);
+#define SENSOR_EVENT_TOUT 5000
 
-uint32_t Evt;
-void Sensor_Event (uint32_t event) {
+#define SENSOR_EVENTS    (SENSOR_EVENT_TEMP_DATA_AVAILABLE  | \
+                          SENSOR_EVENT_HUM_DATA_AVAILABLE   | \
+                          SENSOR_EVENT_PRESS_DATA_AVAILABLE | \
+                          SENSOR_EVENT_ACC_DATA_AVAILABLE   | \
+                          SENSOR_EVENT_GYRO_DATA_AVAILABLE  | \
+                          SENSOR_EVENT_MAG_DATA_AVAILABLE)
 
-  Evt = event;
-}
+uint32_t Interval[6];
+int32_t  Scale[6];
 
-int32_t Scale_In_Temp[4];
-int32_t Scale_In_Acc[4];
 int32_t Scale_Temp;
 int32_t Scale_Acc;
 
-uint32_t ODR_In_Temp[4];
-uint32_t ODR_In_Acc[4];
-uint32_t ODR_Temp;
-uint32_t ODR_Acc;
+osThreadId_t Th_Read;
 
-int32_t Temp;
-int32_t xyz[3];
+void sensor_init   (void);
+void sensor_deinit (void);
 
-void test_sensor (void) {
+void Sensor_Event (uint32_t event) {
+  /* Send event(s) to the processing thread */
+  osThreadFlagsSet (Th_Read, event);
+}
+
+void read_sensors (void *arg) {
+  uint32_t event;
+  uint32_t ts;
+  float fTemp;
+  float fAxes[3];
+
+  while (1U) {
+    /* Wait until Sensor callback wake-up */
+    event = osThreadFlagsWait (SENSOR_EVENTS, osFlagsWaitAny, SENSOR_EVENT_TOUT);
+
+    if ((event & osFlagsError) == 0U) {
+      /* Create a timestamp */
+      ts = osKernelGetTickCount();
+
+      if (event & SENSOR_EVENT_TEMP_DATA_AVAILABLE) {
+        Sensor_EnvReadData (SENSOR_TYPE_TEMP, &fTemp);
+
+        printf ("(%d ms) Temperature: %.1f\n", ts, fTemp);
+      }
+
+      if (event & SENSOR_EVENT_ACC_DATA_AVAILABLE) {
+        Sensor_MotionReadData (SENSOR_TYPE_ACC, &fAxes[0], &fAxes[1], &fAxes[2]);
+
+        printf ("(%d ms) Acceleration: %.5f, %.5f, %.5f\n", ts, fAxes[0], fAxes[1], fAxes[2]);
+      }
+    }
+    else {
+      /* SENSOR_EVENT_TOUT timeout expired or error */
+      printf ("Sensor sampling stopped.\n");
+
+      /* De-init sensor interface */
+      sensor_deinit();
+
+      /* Terminate this thread */
+      osThreadTerminate(Th_Read);
+    }
+  }
+}
+
+void sensor_init (void) {
+  uint32_t interval;
+  int32_t scale;
 
   Sensor_Initialize (Sensor_Event);
+
+  Sensor_QueryInterval (SENSOR_TYPE_TEMP, &Interval[SENSOR_TYPE_TEMP], 1U);
+  Sensor_QueryInterval (SENSOR_TYPE_ACC,  &Interval[SENSOR_TYPE_ACC],  1U);
 
   Sensor_Enable (SENSOR_TYPE_TEMP);
   Sensor_Enable (SENSOR_TYPE_ACC);
 
-  Sensor_QueryScale    (SENSOR_TYPE_TEMP, Scale_In_Temp, sizeof(Scale_In_Temp)/sizeof(Scale_In_Temp[0]));
-  Sensor_SetScale      (SENSOR_TYPE_TEMP, Scale_In_Temp[0]);
-  Sensor_GetScale      (SENSOR_TYPE_TEMP, &Scale_Temp);
+  Sensor_QueryScale    (SENSOR_TYPE_TEMP, &Scale[SENSOR_TYPE_TEMP], 1U);
+  Sensor_QueryScale    (SENSOR_TYPE_ACC,  &Scale[SENSOR_TYPE_ACC],  1U);
 
-  Sensor_QueryDataRate (SENSOR_TYPE_TEMP, ODR_In_Temp, sizeof(ODR_In_Temp)/sizeof(ODR_In_Temp[0]));
-  Sensor_SetDataRate   (SENSOR_TYPE_TEMP, ODR_In_Temp[0]);
-  Sensor_GetDataRate   (SENSOR_TYPE_TEMP, &ODR_Temp);
+  //Sensor_SetScale (SENSOR_TYPE_TEMP, Scale[SENSOR_TYPE_TEMP]);
+  //Sensor_SetScale (SENSOR_TYPE_ACC,  Scale[SENSOR_TYPE_ACC]);
 
-  Sensor_EnvReadData   (SENSOR_TYPE_TEMP, &Temp);
+  scale    = Sensor_GetScale   (SENSOR_TYPE_TEMP);
+  interval = Sensor_GetInterval(SENSOR_TYPE_TEMP);
+  printf ("Temperature: scale=%i, interval=%d\n", scale, interval);
 
-  Sensor_QueryScale    (SENSOR_TYPE_ACC, Scale_In_Acc, sizeof(Scale_In_Acc)/sizeof(Scale_In_Acc[0]));
-  Sensor_SetScale      (SENSOR_TYPE_ACC, Scale_In_Acc[0]);
-  Sensor_GetScale      (SENSOR_TYPE_ACC, &Scale_Acc);
+  scale    = Sensor_GetScale   (SENSOR_TYPE_ACC);
+  interval = Sensor_GetInterval(SENSOR_TYPE_ACC);
+  printf ("Acceleration: scale=%i, interval=%d\n", scale, interval);
+  printf ("\n\n");
+}
 
-  Sensor_QueryDataRate (SENSOR_TYPE_ACC, ODR_In_Acc, sizeof(ODR_In_Acc)/sizeof(ODR_In_Acc[0]));
-  Sensor_SetDataRate   (SENSOR_TYPE_ACC, ODR_In_Acc[0]);
-  Sensor_GetDataRate   (SENSOR_TYPE_ACC, &ODR_Acc);
-
-  Sensor_MotionReadData (SENSOR_TYPE_ACC, &xyz[0], &xyz[1], &xyz[2]);
+void sensor_deinit (void) {
 
   Sensor_Disable (SENSOR_TYPE_TEMP);
   Sensor_Disable (SENSOR_TYPE_ACC);
 
-  Sensor_Uninitialize ();
-
+  Sensor_Uninitialize();
 }
 
 /*---------------------------------------------------------------------------
  * Application main thread
  *---------------------------------------------------------------------------*/
 static void app_main (void *argument) {
-  stdio_init();
+  osThreadAttr_t attr;
 
-  printf ("Test\n");
+  /* Initialize sensor interface */
+  sensor_init();
+
+  attr.stack_size = 2048U;
+
+  Th_Read = osThreadNew (read_sensors, NULL, &attr);
+  if (Th_Read == NULL) {
+    /* This should succeed */
+    __BKPT(0);
+  }
+
+  osThreadFlagsWait (0x1, osFlagsWaitAll, osWaitForever);
+
+  sensor_deinit();
 
   osThreadExit();
 }

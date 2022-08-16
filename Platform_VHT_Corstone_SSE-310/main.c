@@ -14,24 +14,21 @@
  * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- *
- *      Name:    main.c
- *      Purpose: Example program
- *
  *---------------------------------------------------------------------------*/
 
-#include <stdio.h>
-#include <stdlib.h>
-
 #include "RTE_Components.h"
-#include CMSIS_device_header
-
+#include  CMSIS_device_header
 #include "cmsis_os2.h"
+
 #include "main.h"
+
+extern int stdio_init (void);
 
 int main (void) {
 
   SystemCoreClockUpdate();
+
+  stdio_init();                         // Initialize stdio
 
   osKernelInitialize();                 // Initialize CMSIS-RTOS2
   app_initialize();                     // Initialize application

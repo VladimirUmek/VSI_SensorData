@@ -338,7 +338,7 @@
             <v6Rtti>0</v6Rtti>
             <VariousControls>
               <MiscControls></MiscControls>
-              <Define>__ARM_FP=0xe</Define>
+              <Define>__ARM_FP=0xe __FVP_PY STDOUT_CR_LF=1</Define>
               <Undefine></Undefine>
               <IncludePath>..\VSI\include;..\VSI\sensor\include;..\VSI\sensor\driver\Config</IncludePath>
             </VariousControls>
@@ -399,15 +399,17 @@
               <FileType>1</FileType>
               <FilePath>.\main.c</FilePath>
             </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>Board IO</GroupName>
+          <Files>
             <File>
               <FileName>retarget_stdio.c</FileName>
               <FileType>1</FileType>
               <FilePath>.\retarget_stdio.c</FilePath>
             </File>
           </Files>
-        </Group>
-        <Group>
-          <GroupName>Board IO</GroupName>
         </Group>
         <Group>
           <GroupName>Driver</GroupName>

@@ -1,5 +1,5 @@
-/* -----------------------------------------------------------------------------
- * Copyright (c) 2020 Arm Limited (or its affiliates). All rights reserved.
+/*---------------------------------------------------------------------------
+ * Copyright (c) 2021 Arm Limited (or its affiliates). All rights reserved.
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -14,18 +14,66 @@
  * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- * -------------------------------------------------------------------------- */
+ *
+ *      Name:    retarget_stdio.c
+ *      Purpose: Retarget stdio to USART
+ *
+ *---------------------------------------------------------------------------*/
 
-#include <stdio.h>
-#include <stdint.h>
-#include "device_cfg.h"
 #include "Driver_USART.h"
 
-extern ARM_DRIVER_USART Driver_USART0;
+#define USART_DRV_NUM           0
+#define USART_BAUDRATE          115200
 
-void stdio_init (void) {
-  Driver_USART0.Initialize(NULL);
-  Driver_USART0.Control(ARM_USART_MODE_ASYNCHRONOUS, 115200U);
+#define _USART_Driver_(n)  Driver_USART##n
+#define  USART_Driver_(n) _USART_Driver_(n)
+ 
+extern ARM_DRIVER_USART  USART_Driver_(USART_DRV_NUM);
+#define ptrUSART       (&USART_Driver_(USART_DRV_NUM))
+
+/**
+  Initialize stdio
+ 
+  \return          0 on success, or -1 on error.
+*/
+int stdio_init (void) {
+  int32_t status;
+ 
+  status = ptrUSART->Initialize(NULL);
+  if (status != ARM_DRIVER_OK) return (-1);
+ 
+  status = ptrUSART->PowerControl(ARM_POWER_FULL);
+  if (status != ARM_DRIVER_OK) return (-1);
+ 
+  status = ptrUSART->Control(ARM_USART_MODE_ASYNCHRONOUS |
+                             ARM_USART_DATA_BITS_8       |
+                             ARM_USART_PARITY_NONE       |
+                             ARM_USART_STOP_BITS_1       |
+                             ARM_USART_FLOW_CONTROL_NONE,
+                             USART_BAUDRATE);
+  if (status != ARM_DRIVER_OK) return (-1);
+ 
+  status = ptrUSART->Control(ARM_USART_CONTROL_RX, 1);
+  if (status != ARM_DRIVER_OK) return (-1);
+ 
+  return (0);
+}
+
+/**
+  Put a character to the stderr
+ 
+  \param[in]   ch  Character to output
+  \return          The character written, or -1 on write error.
+*/
+int stderr_putchar (int ch) {
+  uint8_t buf[1];
+ 
+  buf[0] = ch;
+  if (ptrUSART->Send(buf, 1) != ARM_DRIVER_OK) {
+    return (-1);
+  }
+  while (ptrUSART->GetTxCount() != 1);
+  return (ch);
 }
 
 /**
@@ -35,19 +83,27 @@ void stdio_init (void) {
   \return          The character written, or -1 on write error.
 */
 int stdout_putchar (int ch) {
-  int32_t ret;
-
-#ifdef __UVISION_VERSION
-  // Windows Telnet expects CR-LF line endings
-  // add carriage return before each line feed
-  if (ch=='\n') {
-    int cr = '\r';
-    Driver_USART0.Send(&cr, 1U);
+  uint8_t buf[1];
+ 
+  buf[0] = ch;
+  if (ptrUSART->Send(buf, 1) != ARM_DRIVER_OK) {
+    return (-1);
   }
-#endif
+  while (ptrUSART->GetTxCount() != 1);
+  return (ch);
+}
 
-  if (Driver_USART0.Send(&ch, 1U) == ARM_DRIVER_OK) {
-    return ch;
+/**
+  Get a character from the stdio
+ 
+  \return     The next character from the input, or -1 on read error.
+*/
+int stdin_getchar (void) {
+  uint8_t buf[1];
+ 
+  if (ptrUSART->Receive(buf, 1) != ARM_DRIVER_OK) {
+    return (-1);
   }
-  return EOF;
+  while (ptrUSART->GetRxCount() != 1);
+  return (buf[0]);
 }
