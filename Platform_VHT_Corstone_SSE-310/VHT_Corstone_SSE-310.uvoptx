@@ -125,7 +125,7 @@
         <SetRegEntry>
           <Number>0</Number>
           <Key>DbgFMv8M</Key>
-          <Name>-I -S"System Generator:cpu_core" -L"cpu0" -O200710 -C0 -MC".\VHT\VHT_Corstone_SSE-310.exe" -MF".\vht_config.txt" -PF -MA"-V "..\VSI\sensor\python" -C cpu_core.mps3_board.telnetterminal0.start_telnet=1"</Name>
+          <Name>-I -S"System Generator:cpu_core" -L"cpu0" -O200710 -C0 -MC".\VHT\VHT_Corstone_SSE-310.exe" -MF".\vht_config.txt" -PF -MA"-V "..\VSI\sensor\python""</Name>
         </SetRegEntry>
         <SetRegEntry>
           <Number>0</Number>
@@ -334,7 +334,7 @@
 
   <Group>
     <GroupName>::Compiler</GroupName>
-    <tvExp>1</tvExp>
+    <tvExp>0</tvExp>
     <tvExpOptDlg>0</tvExpOptDlg>
     <cbSel>0</cbSel>
     <RteFlg>1</RteFlg>
