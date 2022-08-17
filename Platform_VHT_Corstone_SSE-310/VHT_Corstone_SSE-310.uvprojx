@@ -558,30 +558,6 @@
           <targetInfo name="Debug"/>
         </targetInfos>
       </file>
-      <file attr="config" category="linkerScript" condition="Startup ARMCC6 Secure" name="Device\ARM\ARMCM85\Source\ARM\ARMCM85_ac6_s.sct" version="1.0.0">
-        <instance index="0" removed="1">RTE\Device\ARMCM85\ARMCM85_ac6_s.sct</instance>
-        <component Cclass="Device" Cgroup="Startup" Cvariant="C Startup" Cvendor="ARM" Cversion="1.0.0" condition="ARMCM85 CMSIS" isDefaultVariant="1"/>
-        <package name="CMSIS" schemaVersion="1.7.7" url="http://www.keil.com/pack/" vendor="ARM" version="5.9.0"/>
-        <targetInfos/>
-      </file>
-      <file attr="config" category="header" condition="TZ Secure" name="Device\ARM\ARMCM85\Include\Template\partition_ARMCM85.h" version="1.0.0">
-        <instance index="0" removed="1">RTE\Device\ARMCM85\partition_ARMCM85.h</instance>
-        <component Cclass="Device" Cgroup="Startup" Cvariant="C Startup" Cvendor="ARM" Cversion="1.0.0" condition="ARMCM85 CMSIS" isDefaultVariant="1"/>
-        <package name="CMSIS" schemaVersion="1.7.7" url="http://www.keil.com/pack/" vendor="ARM" version="5.9.0"/>
-        <targetInfos/>
-      </file>
-      <file attr="config" category="sourceC" name="Device\ARM\ARMCM85\Source\startup_ARMCM85.c" version="1.0.0">
-        <instance index="0" removed="1">RTE\Device\ARMCM85\startup_ARMCM85.c</instance>
-        <component Cclass="Device" Cgroup="Startup" Cvariant="C Startup" Cvendor="ARM" Cversion="1.0.0" condition="ARMCM85 CMSIS" isDefaultVariant="1"/>
-        <package name="CMSIS" schemaVersion="1.7.7" url="http://www.keil.com/pack/" vendor="ARM" version="5.9.0"/>
-        <targetInfos/>
-      </file>
-      <file attr="config" category="sourceC" name="Device\ARM\ARMCM85\Source\system_ARMCM85.c" version="1.0.0">
-        <instance index="0" removed="1">RTE\Device\ARMCM85\system_ARMCM85.c</instance>
-        <component Cclass="Device" Cgroup="Startup" Cvariant="C Startup" Cvendor="ARM" Cversion="1.0.0" condition="ARMCM85 CMSIS" isDefaultVariant="1"/>
-        <package name="CMSIS" schemaVersion="1.7.7" url="http://www.keil.com/pack/" vendor="ARM" version="5.9.0"/>
-        <targetInfos/>
-      </file>
       <file attr="config" category="header" name="CMSIS_Driver\Config\RTE_Device.h" version="1.0.0">
         <instance index="0">RTE\Device\SSE-310-MPS3\RTE_Device.h</instance>
         <component Cclass="Device" Cgroup="Startup" Cvariant="Baremetal" Cvendor="ARM" Cversion="1.0.0" condition="SSE-310-MPS3 Device"/>
